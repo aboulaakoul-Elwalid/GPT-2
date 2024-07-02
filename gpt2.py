@@ -314,7 +314,7 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_local[k])
         return model
 
-    def generate(self, input, max_length=30, num_return_sequences=5, device="cpu"):
+    def generate(self, input, max_length=30, num_return_sequences=5, device="cpu", generator=None):
         # encode
         enc = tiktoken.get_encoding("gpt2")
         tokens = enc.encode(input)
@@ -323,15 +323,18 @@ class GPT(nn.Module):
         x = tokens.to(device)
 
         # generating loop
-        torch.manual_seed(42)
-        torch.cuda.manual_seed(42)
+        if generator is None:
+            torch.manual_seed(42)
+            torch.cuda.manual_seed(42)
+            generator = torch.Generator(device=device)
+            generator.manual_seed(42)
         while x.size(1) < max_length:
             with torch.no_grad():
                 logits, loss = self(x)
                 logits = logits[:, -1, :]
                 probs  = F.softmax(logits, dim=-1)
                 topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-                ix      = torch.multinomial(topk_probs, 1)
+                ix      = torch.multinomial(topk_probs, 1, generator=generator)
                 xcol    = torch.gather(topk_indices, -1, ix)
                 x       = torch.cat((x, xcol), dim=1)
         
