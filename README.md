@@ -3,8 +3,10 @@
 
 Main files:
 ```
-gpt2.py       -- contains the model architecture and class
-train_gpt2.py -- whole train loop 
+gpt2.py           -- contains the model architecture and class
+train_gpt2.py     -- whole train loop
+fineweb.py        -- pretraining data preprocessing
+gpt_playground.py -- take your custom model for a spin 
 ```
 
 ## Walkthrough notes:
@@ -94,7 +96,7 @@ of words that are interchangeable to be similar"*, makes us save ~30% of model p
       ]
       optimizer = torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95), eps=1e-8)
   ```
-- AllReduce is the same as Reduce, but leaves the Reduce result in every rank (device, process, etc) instead of a single place. We can easily work with cross-Rank variables by for example doing custom allReduce: `torch.distributed(some_variable, op=torch.distributed.ReduceOp.SOMEOP)`.                                                                 
+- AllReduce is the same as Reduce, but leaves the Reduce result in every rank (device, process, etc) instead of a single place. We can easily work with cross-Rank variables by for example doing custom allReduce: `torch.distributed(some_variable, op=torch.distributed.ReduceOp.SOMEOP)`. [Great nccl docs](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/operations.html#allreduce)                                                                 
 ![alt text](images/allreduce.png)
 ![alt text](images/reduce.png)
 
@@ -107,6 +109,7 @@ of words that are interchangeable to be similar"*, makes us save ~30% of model p
 - Set tokens not seen in the input.txt to -inf from start
 - Organize README better, add code snippets for smaller chapters
 - Online softmax with CUDA?
+- Profile with pytorch profiler, try to optimize
 
 ## Questions
 - Why autocast to FP16 would require gradient scaling? Can't we calculate gradients with FP16 to begin with? Therefore all the tensors would be in the same number range, and I guess there wouldn't be a need to scale anything?
