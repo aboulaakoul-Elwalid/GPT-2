@@ -6,6 +6,7 @@ import math
 import tiktoken
 import torch
 import torch.nn as nn
+import numpy as np
 from datetime import datetime
 from torch.nn import functional as F
 import torch.distributed as dist
@@ -13,25 +14,45 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 
+def load_tokens(filename):
+    npt = np.load(filename)
+    ptt = torch.tensor(npt, dtype=torch.long)
+    return ptt
+
+
 class DataLoaderLite:
-    def __init__(self, B, T, inputs=None, process_rank=0, num_processes=1, verbose=False):
+    def __init__(self, B, T, inputs=None, process_rank=0, num_processes=1, verbose=False, split=None):
         self.B = B
         self.T = T
+        self.inputs = inputs
         self.process_rank = process_rank
         self.num_processes = num_processes
 
-        enc = tiktoken.get_encoding("gpt2")
-        if inputs is None: inputs = "input.txt"
-        with open("input.txt", "r") as file:
-            text = file.read()
-        tokens = enc.encode(text)
-        self.tokens = torch.tensor(tokens)
-        if verbose:
-            print(f"Loaded a total of {len(tokens)} tokens")
-            print(f"1 epoch = {len(tokens) // (B * T)} batches")
+        if inputs == "shakespeare":
+            enc = tiktoken.get_encoding("gpt2")
+            with open("input.txt", "r") as file:
+                text = file.read()
+            tokens = enc.encode(text)
+            self.tokens = torch.tensor(tokens)
+            if verbose:
+                print(f"Loaded a total of {len(tokens)} tokens")
+                print(f"1 epoch = {len(tokens) // (B * T)} batches")
 
-        self.max_batches = len(tokens) // (B * T)
-        self.current_position = self.B * self.T * self.process_rank
+            self.max_batches = len(tokens) // (B * T)
+            self.reset()
+        elif inputs == "fineweb":
+            assert split in ("train", "val"), "split must be in ['train', 'val']"
+            data_root = "edu_fineweb100"
+            shards = os.listdir(data_root)
+            shards = [shard for shard in shards if split in shard]
+            shards = sorted(shards)
+            shards = [os.path.join(data_root, shard) for shard in shards]
+            assert len(shards) > 0, "no shards found"
+            self.shards = shards
+            if master_process:
+                print(f"Found {len(shards)} shards for split {split}")
+            self.reset()
+
     
     def next_batch(self):
         B, T = self.B, self.T
@@ -40,12 +61,21 @@ class DataLoaderLite:
         y = buf[1:].view(B, T)
         self.current_position += B * T * self.num_processes # im not entirely sure of this, like intuition wise, but this seems similar to how CUDA kernels do it
         # reset if current_position > tokens length
-        if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
-            self.current_position = self.B * self.T * self.process_rank
+        if self.input == "shakespeare":
+            if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
+                self.current_position = self.B * self.T * self.process_rank
+        elif self.input == "fineweb":
+            if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
+                self.current_shard = (self.current_shard + 1) % len(self.shards)
+                self.tokens = load_tokens(self.shards[self.current_shard])
+                self.current_position = B * T * self.process_rank
         return x, y
     
     def reset(self):
-        self.current_position = 0
+        self.current_position = self.B * self.T * self.process_rank
+        if self.input == "fineweb":
+            self.current_shard = 0
+            self.tokens = load_tokens(self.shards[self.current_shard])
         return self
     
 
@@ -108,7 +138,7 @@ torch.set_float32_matmul_precision("high")
 
 # dataloader
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process)
-
+val_loader   = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process) 
 
 # init model
 model = GPT(GPTConfig(vocab_size=50304)) # random model initialization, will still produce some readable sentence parts due to tokenizer construction
@@ -145,6 +175,37 @@ optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device=device
 start_total = datetime.now()
 metrics = dict(loss=[], tokens_per_sec=[], batch_time=[])
 for step in range(max_steps):
+
+    # valitation
+    if step % 100 == 0:
+        model.eval()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for val_step in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits, loss = model(x, y)
+                loss = loss / val_loss_steps
+                val_loss_accum += loss.detach()
+        if ddp:
+            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+        if master_process:
+            print(f"Validation loss: {val_loss_accum:.6f}")
+
+    # sanity check sampling
+    if step % 100 == 0:
+        model.eval()
+        # test_sentence = "The meaning of life is"
+        test_sentence = "Hello, I'm a language model,"
+        num_return_sequences = 4
+        max_length = 32
+        sample_rng = torch.Generator(device=device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        
+
+    # training
     start = datetime.now()
     optimizer.zero_grad()
     loss_accum = 0.0 # only metric
