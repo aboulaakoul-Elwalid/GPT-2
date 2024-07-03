@@ -98,8 +98,9 @@ class CausalSelfAttention(nn.Module):
         # regularization (why??? where??? what???)
         # more of a mask than bias, but follows HF/openai naming (also not sure why)
         # buffers are non-learnable parameters
-        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                             .view(1, 1, config.block_size, config.block_size))
+        # when using flash attention, we don't need this buffer -- we no longer create the large (T, T) matrix that needs masking
+        # self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+        #                      .view(1, 1, config.block_size, config.block_size))
         
     def forward(self, x):
         B, T, C = x.size() # batch, sequence length, embedding dimension (n_embd)
@@ -321,7 +322,7 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_local[k])
         return model
 
-    def generate(self, input, max_length=30, num_return_sequences=5, device="cpu", generator=None):
+    def generate(self, input, max_length=30, num_return_sequences=5, device="cpu", generator=None, printer=True):
         # encode
         enc = tiktoken.get_encoding("gpt2")
         tokens = enc.encode(input)
@@ -351,7 +352,10 @@ class GPT(nn.Module):
             tokens  = x[i, :max_length].tolist()
             decoded = enc.decode(tokens)
             all_decoded.append(decoded)
-            print(f"> {decoded}")
+            if not printer:
+                print(f"> {decoded}")
+        if not printer:
+            return all_decoded
 
 # class method allows constructing a class through a class method call
 # GPT.from_pretrained('gpt2') would be a way to instantiate a GPT model from a pre-trained checkpoint

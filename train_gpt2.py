@@ -172,12 +172,17 @@ optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device=device
 
 
 # training loop
+train_file       = "train_log.txt"
+val_file         = "val_log.txt"
+generations_file = "generations_log.txt"
+eval_resolution  = 250
 start_total = datetime.now()
 metrics = dict(loss=[], tokens_per_sec=[], batch_time=[])
 for step in range(max_steps):
+    last_step = (step == max_steps - 1)
 
-    # valitation
-    if step % 100 == 0:
+    # validation
+    if step % eval_resolution == 0 or last_step:
         model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
@@ -193,9 +198,11 @@ for step in range(max_steps):
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
             print(f"Validation loss: {val_loss_accum:.6f}")
+            with open(val_file, "a") as file:
+                file.write(f"{step}: {val_loss_accum:.4f}\n")
 
     # sanity check sampling
-    if step % 100 == 0:
+    if step % eval_resolution == 0 and master_process:
         model.eval()
         # test_sentence = "The meaning of life is"
         test_sentence = "Hello, I'm a language model,"
@@ -203,6 +210,12 @@ for step in range(max_steps):
         max_length = 32
         sample_rng = torch.Generator(device=device)
         sample_rng.manual_seed(42 + ddp_rank)
+        generations = model.generate(test_sentence, max_length=max_length, num_return_sequences=num_return_sequences, rng=sample_rng, printer=False)
+        with open(generations_file, "a") as file:
+            file.write(f"Step: {step}\n")
+            for i, generation in enumerate(generations):
+                file.write(f"{i}: ```{generation}```\n")
+            file.write("\n")
         
 
     # training
@@ -246,10 +259,14 @@ for step in range(max_steps):
     batch_time = end-start
     metrics["loss"].append(loss), metrics["tokens_per_sec"].append(tokens_per_sec), metrics["batch_time"].append(batch_time)
     if master_process: 
+        log_string = f"{step}, {loss:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
-        if (step+1) % 50 == 0:
-            torch.save(raw_model.state_dict(), f"model_{step+1}.pth")
-            print(f"Model saved at step {step+1}!")
+        if (step % eval_resolution == 0 or last_step) and step != 0:
+            torch.save(raw_model.state_dict(), f"model_{step}.pth")
+            print(f"Model saved at step {step}!")
+        with open(train_file, "a") as file:
+            file.write(f"{log_string}\n")
+
 
 end_total = datetime.now()
 
