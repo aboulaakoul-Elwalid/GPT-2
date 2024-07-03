@@ -16,6 +16,7 @@ from torch.distributed import init_process_group, destroy_process_group
 
 def load_tokens(filename):
     npt = np.load(filename)
+    npt = npt.astype(np.int32)
     ptt = torch.tensor(npt, dtype=torch.long)
     return ptt
 
@@ -223,6 +224,10 @@ for step in range(max_steps):
     optimizer.zero_grad()
     loss_accum = 0.0 # only metric
     for micro_step in range(grad_accum_steps):
+        if ddp:
+            # boolean telling backward() to sync gradients across all ranks if true, we only want it to happen
+            # on the last micro_step of the grad_accum_steps
+            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
         if "cuda" in device:
@@ -237,10 +242,6 @@ for step in range(max_steps):
         # grad_accum_steps
         loss = loss / grad_accum_steps
         loss_accum += loss.detach() # only a printing metric!
-        if ddp:
-            # boolean telling backward() to sync gradients across all ranks if true, we only want it to happen
-            # on the last micro_step of the grad_accum_steps
-            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward() # it does += automatically, which is why we normally have to zero_grad
     if ddp:
         # average loss across all ranks, god I love this
