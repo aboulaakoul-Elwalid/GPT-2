@@ -339,9 +339,11 @@ class GPT(nn.Module):
                 x       = torch.cat((x, xcol), dim=1)
         
         # decode generated
+        all_decoded = []
         for i in range(num_return_sequences):
             tokens  = x[i, :max_length].tolist()
             decoded = enc.decode(tokens)
+            all_decoded.append(decoded)
             print(f"> {decoded}")
 
 # class method allows constructing a class through a class method call
@@ -356,6 +358,8 @@ if __name__ == "__main__":
     # print(model) # buffers are not visible here, to show them we need to look at model.buffers()
     print("Model loaded successfully!")
 
+    # manual generation
+    print("Manual generation:")
     model.eval() # put model in eval mode, works for layers like: Dropout, BatchNorm, etc.
     model.to(device)
 
@@ -387,3 +391,7 @@ if __name__ == "__main__":
         tokens  = x[i, :max_length].tolist()
         decoded = enc.decode(tokens)
         print(f"> {decoded}") 
+
+    # automatic generation
+    print("Automatic generation:")
+    model.generate("Hello, I'm a language model,", max_length=max_length, num_return_sequences=num_return_sequences, device=device)
