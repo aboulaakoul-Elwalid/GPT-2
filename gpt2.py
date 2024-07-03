@@ -225,7 +225,7 @@ class GPT(nn.Module):
             # do not add to lose either way, at least if my poor mind math skills are ok
         return logits, loss                      # return logits, loss
 
-    def configure_optimizers(self, weight_decay, lr, device, verbose=False):
+    def configure_optimizers(self, weight_decay, lr, device_type, verbose=False):
         # getting all parameters that require grad
         # these are basically just elements like "transformer.h.6.attn.c_attn.bias"
         param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
@@ -247,7 +247,7 @@ class GPT(nn.Module):
         # inspect.signature allows us to check what parameters are in function signature
         # neat
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device == "cuda"
+        use_fused = fused_available and device_type == "cuda"
         if verbose:
             print(f"Using fused AdamW optimizer:", use_fused)
         optimizer = torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)

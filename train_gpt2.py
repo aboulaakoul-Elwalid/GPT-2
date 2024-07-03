@@ -112,6 +112,9 @@ else:
     print(f"DDP: disabled")
     print(f"Device: {device}")
 
+# torch is sometimes really not fun to work with if the device is not raw cuda, ie cuda:2, cuda:3, etc.
+# even though there is no difference, :x is only a mapping to the physical device
+device_type = "cuda" if "cuda" in device else "cpu"
 
 # reproducibility
 seed = 1337
@@ -149,7 +152,7 @@ model.to(device)
 # model = torch.compile(model) #if device.type == "cuda" else model # cpu compile is stuck on MBP
 if ddp:
     DDP(model, device_ids=[ddp_local_rank]) # hmm local rank instead of rank, interesting.....
-raw_model = model if not ddp else model.module # DDP wraps the model in a module, so we have to unwrap it, for some reason it worked for me without this
+raw_model = model #if not ddp else model.module # DDP wraps the model in a module, so we have to unwrap it, for some reason it worked for me without this
 if master_process: 
     print("Model initialized successfully!")
 
@@ -171,22 +174,35 @@ def get_lr(step):
     coeff = 0.5 * (1.0 + math.cos(math.pi + decay_ratio))
     return min_lr + coeff * (max_lr - min_lr)
 # apparently AdamW is bugfixed Adam according to Andrej
-optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device=device, verbose=master_process)
+optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device_type=device_type, verbose=master_process)
 
 
 # local logging
-eval_resolution  = 250
+eval_resolution  = 10
+model_dir        = "models"
 log_dir          = "logs"
 run_dir          = datetime.now(pytz.timezone("Europe/Warsaw")).strftime("%Y-%m-%d_%H-%M-%S")
 if master_process: os.makedirs(os.path.join(log_dir, run_dir), exist_ok=True)
+if master_process: os.makedirs(os.path.join(model_dir, run_dir), exist_ok=True)
 train_file       = os.path.join(log_dir, run_dir, "train_log.txt")
 val_file         = os.path.join(log_dir, run_dir, "val_log.txt")
 generations_file = os.path.join(log_dir, run_dir, "generations_log.txt")
+run_model_dir    = os.path.join(model_dir, run_dir)
 
 # wandb logging
-wandb_logging = wandb.login()
-if master_process and wandb_logging:
-    wandb.init(project="gpt2", name=run_dir)
+if master_process:
+    wandb_logging = wandb.login()
+    if wandb_logging:
+        generations_table = []
+        wandb.init(
+            project="gpt2", name=run_dir, 
+            config={
+                "B": B, "T": T, "total_batch_size": total_batch_size, 
+                "grad_accum_steps": grad_accum_steps, "max_lr": max_lr, 
+                "min_lr": min_lr, "max_steps": max_steps, "warmup_steps": warmup_steps, 
+                "device": device, "ddp": ddp, "ddp_rank": ddp_rank, 
+                "ddp_local_rank": ddp_local_rank, "ddp_world_size": ddp_world_size, "seed": seed,
+                "eval_resolution": eval_resolution})
 
 # training loop
 start_total = datetime.now()
@@ -203,7 +219,7 @@ for step in range(max_steps):
             for val_step in range(val_loss_steps):
                 x, y = val_loader.next_batch()
                 x, y = x.to(device), y.to(device)
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits, loss = model(x, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -236,7 +252,11 @@ for step in range(max_steps):
                 file.write(f"{i}: ```{generation}```\n")
             file.write("\n")
         if wandb_logging:
-            wandb.log({"generations": wandb.Table(data=[generations], columns=[f"generation_{i}" for i in range(1, 5)])})
+            generations_table.append(generations)
+            eval_generations_table = wandb.Table(
+                columns=["generation_1", "generation_2", "generation_3", "generation_4"], 
+                data=generations_table)
+            wandb.log({"generations": eval_generations_table})
         
 
     # training
@@ -251,7 +271,7 @@ for step in range(max_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
         if "cuda" in device:
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 logits, loss = model(x, y)
         else:
             logits, loss = model(x, y)
@@ -273,22 +293,22 @@ for step in range(max_steps):
     norm = nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
     # torch.mps.synchronize() # useful for per epoch timings, only lets cpu continue after gpu finishes work
-    if device == "cuda": torch.cuda.synchronize()
+    if device_type == "cuda": torch.cuda.synchronize()
     end = datetime.now()
     tokens_per_sec = (train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size) / (end-start).total_seconds()
     loss = loss.item()
     batch_time = end-start
-    metrics["loss"].append(loss), metrics["tokens_per_sec"].append(tokens_per_sec), metrics["batch_time"].append(batch_time)
+    metrics["loss"].append(loss_accum), metrics["tokens_per_sec"].append(tokens_per_sec), metrics["batch_time"].append(batch_time)
     if master_process: 
-        log_string = f"{step}, {loss:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
+        log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
         if (step % eval_resolution == 0 or last_step) and step != 0:
-            torch.save(raw_model.state_dict(), f"model_{step}.pth")
+            torch.save(raw_model.state_dict(), os.path.join(run_model_dir, f"model_{step}.pth"))
             print(f"Model saved at step {step}!")
         with open(train_file, "a") as file:
             file.write(f"{log_string}\n")
         if wandb_logging:
-            wandb.log({"step": step, "loss": loss, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
+            wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
 
 
 end_total = datetime.now()
