@@ -236,7 +236,7 @@ for step in range(max_steps):
                 file.write(f"{i}: ```{generation}```\n")
             file.write("\n")
         if wandb_logging:
-            wandb.log({"generations": wandb.Table(data=generations, columns=["generation"])})
+            wandb.log({"generations": wandb.Table(data=[generations], columns=[f"generation_{i}" for i in range(1, 5)])})
         
 
     # training
@@ -288,7 +288,7 @@ for step in range(max_steps):
         with open(train_file, "a") as file:
             file.write(f"{log_string}\n")
         if wandb_logging:
-            wandb.log({"step": step, "loss": loss, "norm": norm, "lr": lr, "batch_time": batch_time, "tokens_per_sec": tokens_per_sec})
+            wandb.log({"step": step, "loss": loss, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
 
 
 end_total = datetime.now()
