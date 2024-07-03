@@ -9,6 +9,16 @@ fineweb.py        -- pretraining data preprocessing
 gpt_playground.py -- take your custom model for a spin 
 ```
 
+## [Reproducibility](https://pytorch.org/docs/stable/notes/randomness.html)
+Even though we set seeds for random generators, different machines and versions may yield different results. Yes, even if you try setting literally all possible generators (random, numpy, environ.... I tried). Therefore I am getting different generations on AMD CPU and Metal CPU. However both should be passing the general vibe check and it is currently the best way I could come up with for judging if it works.
+
+From Torch docs:
+```
+Completely reproducible results are not guaranteed across PyTorch releases, individual commits, or different platforms. Furthermore, results may not be reproducible between CPU and GPU executions, even when using identical seeds.
+```
+
+
+
 ## Walkthrough notes:
 
 - Noisy embedding lines in the embedding layer mean that the model could be trained some more
