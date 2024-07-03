@@ -120,6 +120,7 @@ of words that are interchangeable to be similar"*, makes us save ~30% of model p
 - Organize README better, add code snippets for smaller chapters
 - Online softmax with CUDA?
 - Profile with pytorch profiler, try to optimize
+- How does online softmax allow flash attention?
 
 ## Questions
 - Why autocast to FP16 would require gradient scaling? Can't we calculate gradients with FP16 to begin with? Therefore all the tensors would be in the same number range, and I guess there wouldn't be a need to scale anything?
