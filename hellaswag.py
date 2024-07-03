@@ -28,6 +28,7 @@ gpt2-xl (1558M)
 The validation set of HellaSwag has a total of 10,042 examples.
 
 My AMD CPU score acc_norm: 0.2955 (would worry if it wasn't)
+My Nvidia L4 score acc_norm: 0.2956 (lol)
 """
 
 import os

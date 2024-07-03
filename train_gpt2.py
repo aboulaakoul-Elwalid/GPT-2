@@ -1,5 +1,5 @@
 from gpt2 import GPT, GPTConfig
-from scratch import check_dtypes
+# from scratch import check_dtypes
 
 import os
 import math
@@ -7,6 +7,8 @@ import tiktoken
 import torch
 import torch.nn as nn
 import numpy as np
+import pytz
+import wandb
 from datetime import datetime
 from torch.nn import functional as F
 import torch.distributed as dist
@@ -43,7 +45,7 @@ class DataLoaderLite:
             self.reset()
         elif inputs == "fineweb":
             assert split in ("train", "val"), "split must be in ['train', 'val']"
-            data_root = "edu_fineweb100"
+            data_root = "edu_fineweb10B"
             shards = os.listdir(data_root)
             shards = [shard for shard in shards if split in shard]
             shards = sorted(shards)
@@ -62,10 +64,10 @@ class DataLoaderLite:
         y = buf[1:].view(B, T)
         self.current_position += B * T * self.num_processes # im not entirely sure of this, like intuition wise, but this seems similar to how CUDA kernels do it
         # reset if current_position > tokens length
-        if self.input == "shakespeare":
+        if self.inputs == "shakespeare":
             if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
                 self.current_position = self.B * self.T * self.process_rank
-        elif self.input == "fineweb":
+        elif self.inputs == "fineweb":
             if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
                 self.current_shard = (self.current_shard + 1) % len(self.shards)
                 self.tokens = load_tokens(self.shards[self.current_shard])
@@ -74,7 +76,7 @@ class DataLoaderLite:
     
     def reset(self):
         self.current_position = self.B * self.T * self.process_rank
-        if self.input == "fineweb":
+        if self.inputs == "fineweb":
             self.current_shard = 0
             self.tokens = load_tokens(self.shards[self.current_shard])
         return self
@@ -123,9 +125,9 @@ if master_process:
 
 
 # gradient accumulation
-B = 4  # this controls the accumulating batch size
+B = 16  # this controls the accumulating batch size
 T = 1024 # this does not, if you're short in token length this is not a way to do it
-total_batch_size = B*T*4 # 2**19=~0.5M tokens but a power of 2 as well
+total_batch_size = 2**19 # 2**19=~0.5M tokens but a power of 2 as well
 assert total_batch_size % (B * T * ddp_world_size) == 0, "total_batch_size needs to be divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 if master_process:
@@ -138,8 +140,8 @@ torch.set_float32_matmul_precision("high")
 
 
 # dataloader
-train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process)
-val_loader   = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process) 
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process, inputs="fineweb", split="train")
+val_loader   = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, verbose=master_process, inputs="fineweb", split="val") 
 
 # init model
 model = GPT(GPTConfig(vocab_size=50304)) # random model initialization, will still produce some readable sentence parts due to tokenizer construction
@@ -155,8 +157,8 @@ if master_process:
 # create optimizer
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-warmup_steps = 10
 max_steps = 82 * 10 # 10 epochs
+warmup_steps = 100
 def get_lr(step):
     # linear warmup
     if step < warmup_steps:
@@ -172,11 +174,21 @@ def get_lr(step):
 optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device=device, verbose=master_process)
 
 
-# training loop
-train_file       = "train_log.txt"
-val_file         = "val_log.txt"
-generations_file = "generations_log.txt"
+# local logging
 eval_resolution  = 250
+log_dir          = "logs"
+run_dir          = datetime.now(pytz.timezone("Europe/Warsaw")).strftime("%Y-%m-%d_%H-%M-%S")
+os.makedirs(os.path.join(log_dir, run_dir), exist_ok=True)
+train_file       = os.path.join(log_dir, run_dir, "train_log.txt")
+val_file         = os.path.join(log_dir, run_dir, "val_log.txt")
+generations_file = os.path.join(log_dir, run_dir, "generations_log.txt")
+
+# wandb logging
+wandb_logging = wandb.login()
+if master_process and wandb_logging:
+    wandb.init(project="gpt2", name=run_dir)
+
+# training loop
 start_total = datetime.now()
 metrics = dict(loss=[], tokens_per_sec=[], batch_time=[])
 for step in range(max_steps):
@@ -201,6 +213,8 @@ for step in range(max_steps):
             print(f"Validation loss: {val_loss_accum:.6f}")
             with open(val_file, "a") as file:
                 file.write(f"{step}: {val_loss_accum:.4f}\n")
+            if wandb_logging:
+                wandb.log({"step": step, "val_loss": val_loss_accum})
 
     # sanity check sampling
     if step % eval_resolution == 0 and master_process:
@@ -211,12 +225,18 @@ for step in range(max_steps):
         max_length = 32
         sample_rng = torch.Generator(device=device)
         sample_rng.manual_seed(42 + ddp_rank)
-        generations = model.generate(test_sentence, max_length=max_length, num_return_sequences=num_return_sequences, rng=sample_rng, printer=False)
+        generations = model.generate(
+            test_sentence, 
+            max_length=max_length, 
+            num_return_sequences=num_return_sequences, 
+            generator=sample_rng, printer=False, device=device)
         with open(generations_file, "a") as file:
             file.write(f"Step: {step}\n")
             for i, generation in enumerate(generations):
                 file.write(f"{i}: ```{generation}```\n")
             file.write("\n")
+        if wandb_logging:
+            wandb.log({"generations": wandb.Table(data=generations, columns=["generation"])})
         
 
     # training
@@ -267,6 +287,8 @@ for step in range(max_steps):
             print(f"Model saved at step {step}!")
         with open(train_file, "a") as file:
             file.write(f"{log_string}\n")
+        if wandb_logging:
+            wandb.log({"step": step, "loss": loss, "norm": norm, "lr": lr, "batch_time": batch_time, "tokens_per_sec": tokens_per_sec})
 
 
 end_total = datetime.now()
