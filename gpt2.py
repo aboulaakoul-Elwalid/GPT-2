@@ -77,6 +77,13 @@ class TanhGELU(nn.Module):
     def forward(self, x):
         return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * x**3)))
 
+# sanity check if I understand cross entropy docs, weight can be used for unbalanced classes
+def cross_entropy(t, target, weights: dict | None = None):
+    if weights is not None:
+        return -1 * torch.log(torch.exp(t[target]) / torch.exp(t).sum()) * weights[target]
+    return -1 * torch.log(torch.exp(t[target]) / torch.exp(t).sum())
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
