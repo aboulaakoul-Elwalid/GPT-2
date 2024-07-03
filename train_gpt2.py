@@ -178,7 +178,7 @@ optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device=device
 eval_resolution  = 250
 log_dir          = "logs"
 run_dir          = datetime.now(pytz.timezone("Europe/Warsaw")).strftime("%Y-%m-%d_%H-%M-%S")
-os.makedirs(os.path.join(log_dir, run_dir), exist_ok=True)
+if master_process: os.makedirs(os.path.join(log_dir, run_dir), exist_ok=True)
 train_file       = os.path.join(log_dir, run_dir, "train_log.txt")
 val_file         = os.path.join(log_dir, run_dir, "val_log.txt")
 generations_file = os.path.join(log_dir, run_dir, "generations_log.txt")
