@@ -246,7 +246,7 @@ class GPT(nn.Module):
         return optimizer
 
     @classmethod
-    def from_pretrained(cls, model_name, verbose=False, local=False):
+    def from_pretrained(cls, model_name, verbose=False, local=False, **kwargs):
         if not local:
             assert model_name in ["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"], "model_name should be one of ['gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl']"
             from transformers import GPT2LMHeadModel
@@ -264,7 +264,7 @@ class GPT(nn.Module):
             config_args["vocab_size"] = 50257 # constant for all GPT-2 models
             config_args["block_size"] = 1024  # constant for all GPT-2 models
             config  = GPTConfig(**config_args)
-            model   = GPT(config)
+            model   = GPT(config, **kwargs)
             sd      = model.state_dict()
             sd_keys = sd.keys()
             sd_keys = [k for k in sd_keys if ".attn.bias" not in k] # remove attn.bias buffer, we omit buffers for some reason i dont know why, it doesnt even matter how hardy I try
@@ -296,7 +296,7 @@ class GPT(nn.Module):
         else:
             print(f"Loading GPT-2 model weights from local file: {model_name}")
             config = GPTConfig(vocab_size=50304)
-            model = GPT(config)
+            model = GPT(config, **kwargs)
             sd = model.state_dict()
             sd_keys = sd.keys()
             sd_keys = [k for k in sd_keys if ".attn.bias" not in k]
@@ -350,8 +350,8 @@ class GPT(nn.Module):
 if __name__ == "__main__":
     # init model
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # model = GPT.from_pretrained('gpt2', verbose=False)
-    model = GPT(GPTConfig()) # random model initialization, will still produce some readable sentence parts due to tokenizer construction
+    model = GPT.from_pretrained('gpt2', verbose=True, lower_matmul_precision=False)
+    # model = GPT(GPTConfig()) # random model initialization, will still produce some readable sentence parts due to tokenizer construction
     print(f"Device: {device}")
     # print(model) # buffers are not visible here, to show them we need to look at model.buffers()
     print("Model loaded successfully!")
@@ -374,7 +374,7 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(42)
     while x.size(1) < max_length:
         with torch.no_grad():
-            logits = model(x)                   # get logits from non-grad forward pass
+            logits, loss = model(x)                   # get logits from non-grad forward pass
             logits = logits[:, -1, :]           # take last logits from each batch
             probs  = F.softmax(logits, dim=-1)  # get probabilities from logits
             topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)    # get top50 probs and its indices
