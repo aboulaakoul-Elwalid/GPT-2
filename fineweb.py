@@ -24,8 +24,8 @@ DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), local_dir)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
 # download the dataset, load partial data
-fw = load_dataset("HuggingFaceFW/fineweb-edu", name=remote_name, split="train", data_files="sample/10BT/000_00000.parquet")
-# fw = load_dataset("HuggingFaceFW/fineweb-edu", name=remote_name, split="train")
+#fw = load_dataset("HuggingFaceFW/fineweb-edu", name=remote_name, split="train", data_files="sample/10BT/000_00000.parquet")
+fw = load_dataset("HuggingFaceFW/fineweb-edu", name=remote_name, split="train")
 
 # init the tokenizer
 enc = tiktoken.get_encoding("gpt2")

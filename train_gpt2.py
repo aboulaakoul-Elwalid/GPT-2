@@ -149,7 +149,7 @@ val_loader   = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp
 # init model
 model = GPT(GPTConfig(vocab_size=50304)) # random model initialization, will still produce some readable sentence parts due to tokenizer construction
 model.to(device)
-# model = torch.compile(model) #if device.type == "cuda" else model # cpu compile is stuck on MBP
+model = torch.compile(model) #if device.type == "cuda" else model # cpu compile is stuck on MBP
 if ddp:
     DDP(model, device_ids=[ddp_local_rank]) # hmm local rank instead of rank, interesting.....
 raw_model = model #if not ddp else model.module # DDP wraps the model in a module, so we have to unwrap it, for some reason it worked for me without this
@@ -178,7 +178,7 @@ optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device_type=d
 
 
 # local logging
-eval_resolution  = 10
+eval_resolution  = 1000
 model_dir        = "models"
 log_dir          = "logs"
 run_dir          = datetime.now(pytz.timezone("Europe/Warsaw")).strftime("%Y-%m-%d_%H-%M-%S")
@@ -203,6 +203,14 @@ if master_process:
                 "device": device, "ddp": ddp, "ddp_rank": ddp_rank, 
                 "ddp_local_rank": ddp_local_rank, "ddp_world_size": ddp_world_size, "seed": seed,
                 "eval_resolution": eval_resolution})
+
+# huggingface upload
+enable_hf = True
+if master_process:
+    if enable_hf:
+        from huggingface_hub import HfApi
+        api = HfApi()
+
 
 # training loop
 start_total = datetime.now()
@@ -303,12 +311,20 @@ for step in range(max_steps):
         log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
         if (step % eval_resolution == 0 or last_step) and step != 0:
-            torch.save(raw_model.state_dict(), os.path.join(run_model_dir, f"model_{step}.pth"))
+            model_path = os.path.join(run_model_dir, f"model_{step}.pth")
+            torch.save(raw_model.state_dict(), model_path)
             print(f"Model saved at step {step}!")
-        with open(train_file, "a") as file:
-            file.write(f"{log_string}\n")
-        if wandb_logging:
-            wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
+            if enable_hf:
+                api.upload_file(
+                    path_or_fileobj=model_path,
+                    path_in_repo=f"model_{step}.pth",
+                    repo_id="laz4rz/GPT-2",
+                    repo_type="model",
+                )
+        # with open(train_file, "a") as file:
+        #     file.write(f"{log_string}\n")
+        # if wandb_logging:
+        #     wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
 
 
 end_total = datetime.now()
