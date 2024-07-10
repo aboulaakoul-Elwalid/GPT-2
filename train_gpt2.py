@@ -128,7 +128,7 @@ if master_process:
 
 
 # gradient accumulation
-B = 16  # this controls the accumulating batch size
+B = 64  # this controls the accumulating batch size
 T = 1024 # this does not, if you're short in token length this is not a way to do it
 total_batch_size = 2**19 # 2**19=~0.5M tokens but a power of 2 as well
 assert total_batch_size % (B * T * ddp_world_size) == 0, "total_batch_size needs to be divisible by B * T * ddp_world_size"
@@ -160,8 +160,8 @@ if master_process:
 # create optimizer
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-max_steps = 82 * 10 # 10 epochs
-warmup_steps = 100
+max_steps = 19703 # 1 epoch on 10B fineweb, and batch 0.5M
+warmup_steps = 715
 def get_lr(step):
     # linear warmup
     if step < warmup_steps:
