@@ -171,7 +171,7 @@ def get_lr(step):
         return min_lr
     decay_ratio = (step - warmup_steps) / (max_steps - warmup_steps)
     assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi + decay_ratio))
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (max_lr - min_lr)
 # apparently AdamW is bugfixed Adam according to Andrej
 optimizer = model.configure_optimizers(weight_decay=0.01, lr=6e-4, device_type=device_type, verbose=master_process)
