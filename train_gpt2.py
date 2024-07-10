@@ -310,7 +310,7 @@ for step in range(max_steps):
     if master_process: 
         log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
-        if (step % eval_resolution == 0 or last_step) and step != 0:
+        if (step % eval_resolution == 0 or last_step) or step == 0:
             model_path = os.path.join(run_model_dir, f"model_{step}.pth")
             torch.save(raw_model.state_dict(), model_path)
             print(f"Model saved at step {step}!")
@@ -321,10 +321,10 @@ for step in range(max_steps):
                     repo_id="laz4rz/GPT-2",
                     repo_type="model",
                 )
-        # with open(train_file, "a") as file:
-        #     file.write(f"{log_string}\n")
-        # if wandb_logging:
-        #     wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
+        with open(train_file, "a") as file:
+            file.write(f"{log_string}\n")
+        if wandb_logging:
+            wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
 
 
 end_total = datetime.now()
