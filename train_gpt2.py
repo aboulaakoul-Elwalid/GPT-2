@@ -269,6 +269,7 @@ for step in range(max_steps):
 
     # training
     start = datetime.now()
+    start_rank = datetime.now()
     optimizer.zero_grad()
     loss_accum = 0.0 # only metric
     for micro_step in range(grad_accum_steps):
@@ -294,7 +295,11 @@ for step in range(max_steps):
     if ddp:
         # average loss across all ranks, god I love this
         # if we didnt do this, we would only get master process loss
-        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG) 
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+        batch_time_rank = torch.tensor((datetime.now() - start_rank).total_seconds()).to(device)
+        if master_process:
+            batch_time_per_rank = [torch.zeros_like(batch_time_rank) for _ in range(dist.get_world_size())]
+        dist.gather(batch_time_rank, batch_time_per_rank, dst=0)
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
@@ -308,8 +313,9 @@ for step in range(max_steps):
     batch_time = end-start
     metrics["loss"].append(loss_accum), metrics["tokens_per_sec"].append(tokens_per_sec), metrics["batch_time"].append(batch_time)
     if master_process: 
-        log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}"
+        log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}, {batch_time_per_rank}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
+        [print(f"   Rank {i}: {batch_time:.4f}\n") for i, batch_time in enumerate(batch_time_per_rank)]
         if (step % eval_resolution == 0 or last_step) or step == 0:
             model_path = os.path.join(run_model_dir, f"model_{step}.pth")
             torch.save(raw_model.state_dict(), model_path)
@@ -324,7 +330,10 @@ for step in range(max_steps):
         with open(train_file, "a") as file:
             file.write(f"{log_string}\n")
         if wandb_logging:
-            wandb.log({"step": step, "loss": loss_accum, "norm": norm, "lr": lr, "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec})
+            wandb.log({
+                "step": step, "loss": loss_accum, "norm": norm, "lr": lr, 
+                "batch_time": batch_time.total_seconds(), "tokens_per_sec": tokens_per_sec,
+                } | dict([(f"rank_{i}_batch_time", batch_time_per_rank[i]) for i in range(len(batch_time_per_rank))]))
 
 
 end_total = datetime.now()
