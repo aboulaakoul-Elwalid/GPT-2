@@ -299,6 +299,8 @@ for step in range(max_steps):
         batch_time_rank = torch.tensor((datetime.now() - start_rank).total_seconds()).to(device)
         if master_process:
             batch_time_per_rank = [torch.zeros_like(batch_time_rank) for _ in range(dist.get_world_size())]
+        else:
+            batch_time_per_rank = None
         dist.gather(batch_time_rank, batch_time_per_rank, dst=0)
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
@@ -315,7 +317,7 @@ for step in range(max_steps):
     if master_process: 
         log_string = f"{step}, {loss_accum:.4f}, {norm:.4f}, {lr:.4e}, {batch_time}, {tokens_per_sec:.2f}, {batch_time_per_rank}"
         print(f"Step: {step}, Loss: {loss_accum:.6f}, Norm: {norm:.4f}, lr: {lr:.4e}, Batch time: {batch_time}, Tokens/sec: {tokens_per_sec:.2f}")
-        [print(f"   Rank {i}: {batch_time:.4f}\n") for i, batch_time in enumerate(batch_time_per_rank)]
+        [print(f"   Rank {i}: {batch_time:.4f}") for i, batch_time in enumerate(batch_time_per_rank)]
         if (step % eval_resolution == 0 or last_step) or step == 0:
             model_path = os.path.join(run_model_dir, f"model_{step}.pth")
             torch.save(raw_model.state_dict(), model_path)
