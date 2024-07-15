@@ -1,11 +1,12 @@
 from datasets import load_dataset
 from gpt2 import GPT, GPTConfig
 from transformers import GPT2LMHeadModel
+from torch.nn import functional as F
 import torch
 import tiktoken
 
 # hf download does not work due to bad zip file
-ds = load_dataset("facebook/belebele", split="pol_Latn")
+ds = load_dataset("facebook/belebele", split="eng_Latn")
 
 # loading with manual download
 # ds = load_dataset("json", data_files="pol_Latn.jsonl")["train"]
@@ -22,8 +23,9 @@ def render_example(example):
     - label (the index of the correct completion, which we hope has the highest likelihood)
     """
     ctx = example["question"]
-    label = example["correct_answer_num"]
-    endings = [example["mc_answer1"], example["mc_answer2"], example["mc_answer3"], example["mc_answer4"]]
+    label = int(example["correct_answer_num"]) - 1
+    example["endings"] = [example["mc_answer1"], example["mc_answer2"], example["mc_answer3"], example["mc_answer4"]]
+    endings = example["endings"]
 
     # data needed to reproduce this eval on the C size
     data = {
@@ -53,8 +55,8 @@ def render_example(example):
 
     return data, tokens, mask, label
 
-def iterate_examples(split):
-    for example in ds[split]:
+def iterate_examples():
+    for example in ds:
         yield example
 
 @torch.no_grad()
@@ -68,7 +70,7 @@ def evaluate(model_type, device):
     num_correct_norm = 0
     num_correct = 0
     num_total = 0
-    for example in iterate_examples("val"):
+    for example in iterate_examples():
         data, tokens, mask, label = render_example(example)
         tokens = tokens.to(device)
         mask = mask.to(device)
@@ -92,11 +94,11 @@ def evaluate(model_type, device):
         num_total += 1
         num_correct += int(pred == label)
         num_correct_norm += int(pred_norm == label)
-        print(f"{num_total} acc_norm: {num_correct_norm}/{num_total}={num_correct_norm/num_total:.4f}")
+        print(f"{num_total} acc_norm: {num_correct_norm}/{num_total}={num_correct_norm/num_total:.4f} -- pred: {pred}, label: {example['correct_answer_num']}")
 
         if num_total < 10:
             print("---")
-            print(f"Context:\n {example['ctx']}")
+            print(f"Context:\n {example['question']}")
             print(f"Endings:")
             for i, end in enumerate(example["endings"]):
                 print(f"{i} (loss: {avg_loss[i].item():.4f}) {end}")
