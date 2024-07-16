@@ -17,7 +17,10 @@ From Torch docs:
 Completely reproducible results are not guaranteed across PyTorch releases, individual commits, or different platforms. Furthermore, results may not be reproducible between CPU and GPU executions, even when using identical seeds.
 ```
 
+## Final results
+So, well. Something went wrong and my performance is slightly worse than what Karpathy achieved in the video. I'm not sure why, I double checked all the parameters, wen over the code, but if there is some tiny bug that results in 0.01 worse performance on Hellaswag, then I'd probably need to spend like 20 hours to track it down. I made peace with it. Maybe I don't know, it's down to using different cards -- I wish. 
 
+![alt text](images/final_hella.png)
 
 ## Walkthrough notes:
 
