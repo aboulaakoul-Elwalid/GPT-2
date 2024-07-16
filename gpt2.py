@@ -1,6 +1,7 @@
 import math
 import inspect
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import tiktoken
 import numpy as np
@@ -169,7 +170,7 @@ class GPTConfig:
 
 class GPT(nn.Module):
 
-    def __init__(self, config, lower_matmul_precision=True):
+    def __init__(self, config, lower_matmul_precision=True, return_dict=False):
         super().__init__()
 
         self.config = config
@@ -192,6 +193,9 @@ class GPT(nn.Module):
         # if I understood correctly, on MPS it will use the BFloat16 solution, TF32 is not supported
         if lower_matmul_precision:
             torch.set_float32_matmul_precision("high")
+
+        print("return dict:", return_dict)
+        self.return_dict = return_dict
 
  # parameters specific to GPT2/GPT3 papers
     def _init_weights(self, module):
@@ -223,6 +227,8 @@ class GPT(nn.Module):
             # quite counterintuitive for me, cause id think that we only want to compare the last logits??
             # since we only generate them?? but we can probably just compare all since, the correctly matched
             # do not add to lose either way, at least if my poor mind math skills are ok
+        if self.return_dict:
+            return SimpleNamespace(logits=logits, loss=loss)
         return logits, loss                      # return logits, loss
 
     def configure_optimizers(self, weight_decay, lr, device_type, verbose=False):
@@ -308,15 +314,17 @@ class GPT(nn.Module):
             sd = model.state_dict()
             sd_keys = sd.keys()
             sd_keys = [k for k in sd_keys if ".attn.bias" not in k]
-        
             # load local model weights
             sd_local = torch.load(model_name, map_location="cpu")
             sd_local_keys = sd_local.keys()
             sd_local_keys = [k for k in sd_local_keys if ".attn.bias" not in k]
+            # naive way of handling torch.compile orig_mod
+            sd_local_keys = [k.replace("_orig_mod.", "") for k in sd_local_keys]
+            sd_local = {key.replace("_orig_mod.", ""): value for key, value in sd_local.items()}
             assert len(sd_keys) == len(sd_local_keys), f"mismatch in number of keys: custom {len(sd_keys)} vs local {len(sd_local_keys)}"
             for k in sd_local_keys:
-                print(f"   Loading: {k}")
-                print("     from: {:15s}\n       to: {:15s}".format(str(sd_local[k].shape), str(sd[k].shape)))
+                if verbose: print(f"   Loading: {k}")
+                if verbose: print("     from: {:15s}\n       to: {:15s}".format(str(sd_local[k].shape), str(sd[k].shape)))
                 assert sd_local[k].shape == sd[k].shape, f"mismatch in shape for {k}"
                 with torch.no_grad():
                     sd[k].copy_(sd_local[k])

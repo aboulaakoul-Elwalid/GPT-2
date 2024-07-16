@@ -68,7 +68,7 @@ Completely reproducible results are not guaranteed across PyTorch releases, indi
     - Local Rank -- an ID assigned to a process running on one of the GPUs on a specific node, unique only on node (2 nodes with 2 GPUs each = 2 Local Ranks each)
     - World Size -- number of all GPUs (processes) that are started in the distributed training run (2 nodes with 2 GPUs = World Size of 4)
     - AllReduce -- same as reduce, Array -> SingleNumber operation, but shares the result with all Ranks in the training run (Reduce only leaves result on one Rank), we run AllReduce after a single forward pass on all Ranks, averaging the gradient and sharing it with all Ranks, so they can all do the same optimizing step
-  
+ - torch.compile will add _orig_mod. to each of the model keys, so if you plan to use the model further, remember to eiter drop it before saving or handle it after, simple `.replace("_orig_mod.", "")` works 
   
 ## Other quick wisdom
 - torch buffers are basically non-learnable model tensors
