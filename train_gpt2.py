@@ -1,4 +1,5 @@
 from gpt2 import GPT, GPTConfig
+from eval import get_hellaswag, evaluate
 # from scratch import check_dtypes
 
 import os
@@ -211,6 +212,10 @@ if master_process:
         from huggingface_hub import HfApi
         api = HfApi()
 
+# validation ds
+if master_process:
+    ds = get_hellaswag()
+
 
 # training loop
 start_total = datetime.now()
@@ -266,8 +271,22 @@ for step in range(max_steps):
                 data=generations_table)
             wandb.log({"generations": eval_generations_table})
         
+    # hellaswag
+    if step % eval_resolution == 0 and master_process:
+        model.eval()
+        with torch.no_grad():
+            acc = evaluate(
+                model, 
+                tiktoken.get_encoding("gpt2"),
+                "cuda:0",
+                ds,
+                return_acc=True,
+                no_dot_notation=True
+            )
+        wandb.log({"hellaswag": acc})
 
     # training
+    model.train()
     start = datetime.now()
     start_rank = datetime.now()
     optimizer.zero_grad()
@@ -302,6 +321,8 @@ for step in range(max_steps):
         else:
             batch_time_per_rank = None
         dist.gather(batch_time_rank, batch_time_per_rank, dst=0)
+    else:
+        batch_time_per_rank = [] 
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
